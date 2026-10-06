@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>照片复核</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6f7;color:#222;font:15px system-ui,sans-serif}
+header{background:white;border-bottom:1px solid #ddd;padding:18px 24px}h1{font-size:24px;margin:0 0 12px}
+main{max-width:1400px;margin:auto;padding:20px}h2{font-size:20px}small{font-size:14px;color:#666;font-weight:normal}
+.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}button,input,select{font:inherit;max-width:100%}
+button{padding:8px 12px;cursor:pointer;background:#fff;border:1px solid #aaa;border-radius:4px}
+input,select{padding:6px;border:1px solid #aaa;border-radius:3px}input{min-width:0;width:100%}
+section{padding:16px 0;border-top:1px solid #ddd}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px}
+article{border:1px solid #ccc;border-radius:6px;overflow:hidden;background:white}article.selected{border-color:#16835e}
+.photo{width:100%;aspect-ratio:4/3;object-fit:contain;background:#eee;display:block}.details{padding:12px;overflow-wrap:anywhere}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}label{display:grid;gap:4px;font-size:13px}
+.faces{border-top:1px solid #ddd;margin-top:12px;padding-top:10px}.face{display:grid;grid-template-columns:72px 1fr;gap:10px;margin-bottom:14px}
+.face img{width:72px;height:88px;object-fit:contain;background:#eee}.face .fields{margin-top:6px}
+p{color:#666;font-size:13px}a{color:#087253}a:focus,button:focus{outline:2px solid #16835e}
+#status{color:#087253}#errors{color:#ad233c;overflow-wrap:anywhere;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header><h1>照片复核</h1><div class="toolbar">
+<span id="summary"></span><button id="export">导出复核文件</button>
+<label>导入复核文件 <input id="import" type="file" accept=".json"></label>
+<label><span>显示</span><select id="filter"><option value="all">全部照片</option><option value="selected">推荐与选中</option><option value="portrait">有人脸</option></select></label>
+<span id="status" role="status"></span></div></header>
+<main><div id="groups"></div><section id="plans"></section><div id="errors" role="alert"></div></main>
+<script id="data" type="application/json">__PHOTO_DATA__</script>
+<script>
+const data=JSON.parse(document.getElementById('data').textContent);
+const edits=data.photos.map(p=>({path:p.path,group:p.group,selected:p.selected_override??null,
+  faces:p.faces.map(f=>({index:f.index,person:f.person,eyes:f.eyes,expression:f.expression}))}));
+const byPath=new Map(edits.map(p=>[p.path,p]));
+function element(tag,text){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e;}
+function field(title,control){const l=element('label',title);l.append(control);return l;}
+function choice(options,value,change){const s=element('select');for(const [v,label] of options){const o=element('option',label);o.value=v;s.append(o);}s.value=value;s.onchange=()=>{change(s.value);document.getElementById('status').textContent='有未导出的修改';};return s;}
+function textInput(value,change){const i=element('input');i.value=value;i.maxLength=80;i.onchange=()=>{change(i.value.trim());document.getElementById('status').textContent='有未导出的修改';};return i;}
+function chosen(p){const e=byPath.get(p.path);return e.selected===null?p.recommended:e.selected;}
+function render(){
+ const root=document.getElementById('groups');root.replaceChildren();const filter=document.getElementById('filter').value;
+ const groups=new Map();for(const p of data.photos){const e=byPath.get(p.path);if(!groups.has(e.group))groups.set(e.group,[]);groups.get(e.group).push(p);}
+ document.getElementById('summary').textContent=`${data.photos.length} 张 · ${groups.size} 个场景`;
+ for(const [name,photos] of groups){const visible=photos.filter(p=>filter==='all'||filter==='selected'&&chosen(p)||filter==='portrait'&&p.faces.length);if(!visible.length)continue;
+ const section=element('section');const heading=element('h2',name+' ');heading.append(element('small',`${photos.length} 张`));section.append(heading);const grid=element('div');grid.className='grid';
+ for(const p of visible){const e=byPath.get(p.path);const card=element('article');card.className=chosen(p)?'selected':'';
+ const link=element('a');link.href=p.original_uri;link.target='_blank';
+ const image=element('img');image.src=p.thumbnail;image.className='photo';image.alt=p.path.split(/[\\/]/).pop();image.loading='lazy';link.append(image);card.append(link);
+ const details=element('div');details.className='details';details.append(element('strong',`#${p.id} · ${image.alt}`));details.append(element('p',`${p.faces.length} 张人脸 · 评分 ${p.score.toFixed(2)} · 清晰度 ${p.sharpness.toFixed(0)}`));
+ const fields=element('div');fields.className='fields';fields.append(field('场景编号',textInput(e.group,v=>{if(v){e.group=v;render();}})),field('选片',choice([['auto','自动推荐'],['yes','选中'],['no','排除']],e.selected===null?'auto':e.selected?'yes':'no',v=>{e.selected=v==='auto'?null:v==='yes';render();})));details.append(fields);
+ if(p.faces.length){const faces=element('div');faces.className='faces';for(const f of p.faces){const edit=e.faces.find(x=>x.index===f.index);const row=element('div');row.className='face';const crop=element('img');crop.src=f.crop;crop.alt=`人脸 ${f.index}`;row.append(crop);const controls=element('div');controls.append(field(`人脸 ${f.index} · 人物编号`,textInput(edit.person,v=>edit.person=v)));const states=element('div');states.className='fields';states.append(field('眼睛',choice([['unknown','未知'],['open','睁眼'],['closed','闭眼']],edit.eyes,v=>edit.eyes=v)),field('表情',choice([['unknown','未知'],['good','好'],['bad','不佳']],edit.expression,v=>edit.expression=v)));controls.append(states);row.append(controls);faces.append(row);}details.append(faces);}card.append(details);grid.append(card);}
+ section.append(grid);root.append(section);}
+ const plans=document.getElementById('plans');plans.replaceChildren();if(data.composite_plans.length){plans.append(element('h2','待确认合成方案'));for(const p of data.composite_plans){plans.append(element('p',`${p.group} · 底图 ${p.base}`));for(const r of p.replacements)plans.append(element('p',`${r.person}：使用 ${r.source} 中的人脸 ${r.source_face} 替换人脸 ${r.target_face}`));}}
+ document.getElementById('errors').textContent=data.errors.map(e=>e.path+': '+e.error).join('\n');
+}
+document.getElementById('export').onclick=()=>{const blob=new Blob([JSON.stringify({version:1,photos:edits},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=element('a');a.href=url;a.download='review.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);document.getElementById('status').textContent='已导出复核文件';};
+document.getElementById('filter').onchange=render;
+document.getElementById('import').onchange=async event=>{try{const imported=JSON.parse(await event.target.files[0].text());if(imported.version!==1||!Array.isArray(imported.photos))throw Error('复核文件格式无效');const seen=new Set();const updates=[];for(const p of imported.photos){const target=byPath.get(p.path);if(!target||seen.has(p.path)||typeof p.group!=='string'||!p.group.trim()||p.group.length>80||![true,false,null].includes(p.selected)||!Array.isArray(p.faces))throw Error('照片或分组字段无效');seen.add(p.path);const indices=new Set();for(const f of p.faces){if(!target.faces.some(x=>x.index===f.index)||indices.has(f.index)||typeof f.person!=='string'||f.person.length>80||!['open','closed','unknown'].includes(f.eyes)||!['good','bad','unknown'].includes(f.expression))throw Error('人脸字段无效');indices.add(f.index);}updates.push([target,p]);}for(const [target,p] of updates){target.group=p.group.trim();target.selected=p.selected;for(const f of p.faces)Object.assign(target.faces.find(x=>x.index===f.index),{person:f.person.trim(),eyes:f.eyes,expression:f.expression});}render();document.getElementById('status').textContent='已导入复核文件';}catch(error){document.getElementById('status').textContent=error.message;}};
+render();
+</script>
+</body></html>
